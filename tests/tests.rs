@@ -1,4 +1,5 @@
 #![feature(std_misc)]
+#![feature(semaphore)]
 extern crate posix_ipc as ipc;
 
 use ipc::signals;
