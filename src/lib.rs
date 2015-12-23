@@ -1,9 +1,28 @@
 #![feature(trace_macros,alloc)]
 #[macro_use] extern crate enum_primitive;
+extern crate libc;
+
+#[cfg(target_arch = "x86_64")]
+mod syscalls {
+  use libc;
+
+  pub const SYS_tkill: libc::c_long = 200;
+  pub const SYS_tgkill: libc::c_long = 234;
+}
+
+#[cfg(target_arch = "x86")]
+mod syscalls {
+  use libc;
+
+  pub const SYS_tkill: libc::c_long = 238;
+  pub const SYS_tgkill: libc::c_long = 270;
+}
+
 pub mod signals {
-    extern crate libc;
     use std::io;
     use std::mem;
+    use libc;
+    use syscalls;
 
     enum_from_primitive! {
     #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
@@ -44,23 +63,37 @@ pub mod signals {
     }
 
     impl Signal {
-        pub fn raise(self) -> Result<(), libc::c_int> {
+        pub fn raise(self) -> Result<(), io::Error> {
             match unsafe { raise(self as libc::c_int) } {
                 0 => Result::Ok(()),
-                _ => Result::Err(io::Error::last_os_error().raw_os_error().unwrap())
+                _ => Result::Err(io::Error::last_os_error())
             }
         }
 
-        pub fn kill(self, pid: libc::pid_t) -> Result<(), libc::c_int> {
+        pub fn kill(self, pid: libc::pid_t) -> Result<(), io::Error> {
             match unsafe { kill(pid, self as libc::c_int) } {
                 0 => Result::Ok(()),
-                _ => Result::Err(io::Error::last_os_error().raw_os_error().unwrap())
+                _ => Result::Err(io::Error::last_os_error())
             }
         }
 
-        pub unsafe fn handle(self, handler: Box<FnMut(Signal)>) -> Result<(), libc::c_int> {
+        pub fn tkill(self, tpid: libc::pid_t) -> Result<(), io::Error> {
+            match unsafe { syscall(syscalls::SYS_tkill, tpid, self as libc::c_int) } {
+                0 => Result::Ok(()),
+                _ => Result::Err(io::Error::last_os_error())
+            }
+        }
+
+        pub fn tgkill(self, tgid: libc::pid_t, tpid: libc::pid_t) -> Result<(), io::Error> {
+            match unsafe { syscall(syscalls::SYS_tgkill, tgid, tpid, self as libc::c_int) } {
+                0 => Result::Ok(()),
+                _ => Result::Err(io::Error::last_os_error())
+            }
+        }
+
+        pub unsafe fn handle(self, handler: Box<FnMut(Signal)>) -> Result<(), io::Error> {
             match signal (self as libc::c_int, mem::transmute(glue::rust_signal_handler)) {
-                -1 => Result::Err(io::Error::last_os_error().raw_os_error().unwrap()),
+                -1 => Result::Err(io::Error::last_os_error()),
                 _ => { glue::set_handler(self, handler); Result::Ok(()) }
             }
         }
@@ -121,5 +154,6 @@ pub mod signals {
         fn raise(sig: libc::c_int) -> libc::c_int;
         fn signal(sig: libc::c_int, handler: *const libc::c_void) -> libc::c_int;
         fn kill(pid: libc::pid_t, sig: libc::c_int) -> libc::c_int;
+        fn syscall(syscall: libc::c_long, ...) -> libc::c_int;
     }
 }
